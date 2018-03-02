@@ -187,18 +187,18 @@ func TestConcurrentCASWrites(t *testing.T) {
 	// Each proposal will go to a random proposer, to keep us honest.
 	worker := func(key string, values [][]byte) {
 		var prev []byte // initially no value is set
-		for i, value := range values {
+		for i, next := range values {
 			var (
 				p = randomProposer()
-				f = cas(prev, value)
+				f = cas(prev, next)
 			)
 			have, err := p.Propose(ctx, key, f)
 			if err != nil {
-				t.Errorf("%s worker: step %d (%s -> %s): %v", key, i+1, prettyPrint(prev), value, err)
+				t.Errorf("%s worker: step %d (%s -> %s): %v", key, i+1, prettyPrint(prev), prettyPrint(next), err)
 				return
 			}
-			if want, have := string(value), string(have); want != have {
-				t.Errorf("%s worker: step %d (%s -> %s): want %s, have %s", key, i+1, prettyPrint(prev), value, want, have)
+			if want, have := string(next), string(have); want != have {
+				t.Errorf("%s worker: step %d (%s -> %s): want %s, have %s", key, i+1, prettyPrint(prev), prettyPrint(next), want, have)
 				return
 			}
 			prev = have
