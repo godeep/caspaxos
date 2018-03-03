@@ -8,38 +8,65 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"time"
 
+	"github.com/go-kit/kit/log"
+	"github.com/go-kit/kit/log/level"
 	"github.com/gorilla/mux"
-	"github.com/peterbourgon/caspaxos"
 	"github.com/pkg/errors"
+
+	"github.com/peterbourgon/caspaxos"
 )
 
 // AcceptorServer wraps a caspaxos.Acceptor and provides a basic HTTP API.
 //
-//     POST /prepare/:key
+//     POST /prepare/{key}
 //         Prepare request for the given key.
 //         Expects and returns "X-Caspaxos-Ballot: Counter/ID" header.
 //         Returns 412 Precondition Failed on protocol error.
 //
-//     POST /accept/:key/:value
-//         Accept request for the given key and value.
+//     POST /accept/{key}?value=VALUE
+//         Accept request for the given key and value. Value may be empty.
 //         Expects "X-Caspaxos-Ballot: Counter/ID" header.
 //         Returns 406 Not Acceptable on protocol error.
 //
 type AcceptorServer struct {
-	Acceptor caspaxos.Acceptor
+	http.Handler
+	acceptor caspaxos.Acceptor
+	logger   log.Logger
 }
 
-func (as AcceptorServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	println("### AcceptorServer ServeHTTP", r.Method, r.URL.String())
-	router := mux.NewRouter().StrictSlash(true).Methods("POST").Subrouter()
-	router.HandleFunc("/prepare/{key}", as.handlePrepare)
-	router.HandleFunc("/accept/{key}/{value}", as.handleAccept)
-	router.HandleFunc("/accept/{key}", as.handleAccept) // no value is OK
-	router.ServeHTTP(w, r)
+// NewAcceptorServer returns an AcceptorServer wrapping the provided acceptor.
+// The AcceptorServer is an http.Handler and can ServeHTTP.
+func NewAcceptorServer(acceptor caspaxos.Acceptor, logger log.Logger) AcceptorServer {
+	as := AcceptorServer{
+		acceptor: acceptor,
+		logger:   logger,
+	}
+	{
+		r := mux.NewRouter().StrictSlash(true)
+		r = r.Methods("POST").HeadersRegexp(ballotHeaderKey, "([0-9]+)/([0-9]+)").Subrouter()
+		r.HandleFunc("/prepare/{key}", as.handlePrepare)
+		r.HandleFunc("/accept/{key}", as.handleAccept)
+		as.Handler = r
+	}
+	return as
 }
 
 func (as AcceptorServer) handlePrepare(w http.ResponseWriter, r *http.Request) {
+	iw := &interceptingWriter{w, http.StatusOK}
+	defer func(begin time.Time) {
+		level.Info(as.logger).Log(
+			"handler", "handlePrepare",
+			"method", r.Method,
+			"url", r.URL.String(),
+			ballotHeaderKey, r.Header.Get(ballotHeaderKey),
+			"took", time.Since(begin),
+			"status", iw.code,
+		)
+	}(time.Now())
+	w = iw
+
 	key := mux.Vars(r)["key"]
 	if key == "" {
 		http.Error(w, "no key specified", http.StatusBadRequest)
@@ -52,7 +79,9 @@ func (as AcceptorServer) handlePrepare(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	val, current, err := as.Acceptor.Prepare(r.Context(), key, b)
+	level.Debug(as.logger).Log("invoking", "Prepare", "key", key, "B", b)
+	val, current, err := as.acceptor.Prepare(r.Context(), key, b)
+	level.Debug(as.logger).Log("resultof", "Prepare", "val", string(val), "current", current, "err", err)
 	ballot2header(current, w.Header())
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusPreconditionFailed)
@@ -64,6 +93,19 @@ func (as AcceptorServer) handlePrepare(w http.ResponseWriter, r *http.Request) {
 }
 
 func (as AcceptorServer) handleAccept(w http.ResponseWriter, r *http.Request) {
+	iw := &interceptingWriter{w, http.StatusOK}
+	defer func(begin time.Time) {
+		level.Info(as.logger).Log(
+			"handler", "handleAccept",
+			"method", r.Method,
+			"url", r.URL.String(),
+			ballotHeaderKey, r.Header.Get(ballotHeaderKey),
+			"took", time.Since(begin),
+			"status", iw.code,
+		)
+	}(time.Now())
+	w = iw
+
 	vars := mux.Vars(r)
 	key := vars["key"]
 	if key == "" {
@@ -72,7 +114,7 @@ func (as AcceptorServer) handleAccept(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var valueBytes []byte
-	if value := vars["value"]; value != "" {
+	if value := r.URL.Query().Get("value"); value != "" {
 		valueBytes = []byte(value)
 	}
 
@@ -82,7 +124,8 @@ func (as AcceptorServer) handleAccept(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err = as.Acceptor.Accept(r.Context(), key, b, valueBytes); err != nil {
+	level.Debug(as.logger).Log("invoking", "Accept", "key", key, "B", b, "value", string(valueBytes))
+	if err = as.acceptor.Accept(r.Context(), key, b, valueBytes); err != nil {
 		http.Error(w, err.Error(), http.StatusNotAcceptable)
 		return
 	}
@@ -118,15 +161,13 @@ func (ac AcceptorClient) Prepare(ctx context.Context, key string, b caspaxos.Bal
 	}
 
 	u := *ac.URL
-	u.Path = fmt.Sprintf("/prepare/%s", url.PathEscape(key))
-	println("### AcceptorClient Prepare POST to", u.String())
+	u.Path = fmt.Sprintf("/prepare/%s/", url.PathEscape(key))
 	req, err := http.NewRequest("POST", u.String(), nil)
 	if err != nil {
 		return nil, caspaxos.Ballot{}, errors.Wrap(err, "constructing HTTP request")
 	}
 
 	ballot2header(b, req.Header)
-	println("### AcceptorClient Prepare ballot2header", b.String(), "->", req.Header.Get(ballotHeaderKey))
 	req = req.WithContext(ctx)
 	resp, err := client.Do(req)
 	if err != nil {
@@ -148,6 +189,9 @@ func (ac AcceptorClient) Prepare(ctx context.Context, key string, b caspaxos.Bal
 		return nil, current, errors.Wrap(err, "consuming response value")
 	}
 
+	if len(value) == 0 {
+		value = nil
+	}
 	return value, current, nil
 }
 
@@ -160,25 +204,23 @@ func (ac AcceptorClient) Accept(ctx context.Context, key string, b caspaxos.Ball
 	}
 
 	u := *ac.URL
-	u.Path = fmt.Sprintf("/accept/%s/%s", url.PathEscape(key), url.PathEscape(string(value)))
-	println("### AcceptorClient Accept POST", u.String())
+	u.Path = fmt.Sprintf("/accept/%s", url.PathEscape(key))
+	if value != nil {
+		u.RawQuery = fmt.Sprintf("value=%s", url.QueryEscape(string(value)))
+	}
 	req, err := http.NewRequest("POST", u.String(), nil)
 	if err != nil {
-		println("### AcceptorClient Accept POST", u.String(), "NewRequest error", err.Error())
 		return errors.Wrap(err, "constructing HTTP request")
 	}
 
 	ballot2header(b, req.Header)
-	println("### AcceptorClient Accept", req.Method, req.URL.String(), ballotHeaderKey, req.Header.Get(ballotHeaderKey))
 	req = req.WithContext(ctx)
 	resp, err := client.Do(req)
 	if err != nil {
-		println("### AcceptorClient Accept", req.Method, req.URL.String(), "Do error", err.Error())
 		return errors.Wrap(err, "executing HTTP request")
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		println("### AcceptorClient Accept", req.Method, req.URL.String(), "Status error", resp.Status)
 		return errors.New(resp.Status)
 	}
 

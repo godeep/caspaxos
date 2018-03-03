@@ -25,6 +25,7 @@ import (
 func runProposer(args []string) error {
 	flagset := flag.NewFlagSet("proposer", flag.ExitOnError)
 	var (
+		debug                = flagset.Bool("debug", false, "log debug information")
 		apiAddr              = flagset.String("api", defaultAPIAddr, "listen address for HTTP API")
 		clusterBindAddr      = flagset.String("cluster", defaultClusterAddr, "listen address for cluster comms")
 		clusterAdvertiseAddr = flagset.String("cluster.advertise-addr", "", "optional, explicit address to advertise in cluster")
@@ -40,6 +41,11 @@ func runProposer(args []string) error {
 	var logger log.Logger
 	{
 		logger = log.NewLogfmtLogger(os.Stderr)
+		lv := level.AllowInfo()
+		if *debug {
+			lv = level.AllowDebug()
+		}
+		logger = level.NewFilter(logger, lv)
 	}
 
 	// Parse API addresses.
@@ -145,7 +151,11 @@ func runProposer(args []string) error {
 	// Construct the proposer.
 	var proposer caspaxos.Proposer
 	{
-		proposer = caspaxos.NewLocalProposer(id, log.With(logger, "component", "proposer"), initialAcceptors...)
+		proposer = caspaxos.NewLocalProposer(
+			id,
+			log.With(logger, "component", "proposer"),
+			initialAcceptors...,
+		)
 		// TODO(pb): wire up configuration changes
 	}
 
@@ -170,9 +180,7 @@ func runProposer(args []string) error {
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 		server := &http.Server{
-			Handler: httpapi.ProposerServer{
-				Proposer: proposer,
-			},
+			Handler: httpapi.NewProposerServer(proposer, log.With(logger, "component", "api")),
 		}
 		level.Info(logger).Log("component", "api", "addr", apiListener.Addr().String())
 		g.Add(func() error {
