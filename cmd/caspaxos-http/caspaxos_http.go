@@ -3,14 +3,9 @@ package main
 import (
 	"flag"
 	"fmt"
-	"net"
-	"net/url"
 	"os"
-	"strconv"
 	"strings"
 	"text/tabwriter"
-
-	"github.com/pkg/errors"
 )
 
 const (
@@ -70,32 +65,6 @@ func (ss *stringslice) String() string {
 	return strings.Join(*ss, ", ")
 }
 
-func hasNonlocal(clusterPeers stringslice) bool {
-	for _, peer := range clusterPeers {
-		if host, _, err := net.SplitHostPort(peer); err == nil {
-			peer = host
-		}
-		if ip := net.ParseIP(peer); ip != nil && !ip.IsLoopback() {
-			return true
-		} else if ip == nil && strings.ToLower(peer) != "localhost" {
-			return true
-		}
-	}
-	return false
-}
-
-func isUnroutable(addr string) bool {
-	if host, _, err := net.SplitHostPort(addr); err == nil {
-		addr = host
-	}
-	if ip := net.ParseIP(addr); ip != nil && (ip.IsUnspecified() || ip.IsLoopback()) {
-		return true // typically 0.0.0.0 or localhost
-	} else if ip == nil && strings.ToLower(addr) == "localhost" {
-		return true
-	}
-	return false
-}
-
 func usageFor(fs *flag.FlagSet, short string) func() {
 	return func() {
 		fmt.Fprintf(os.Stderr, "USAGE\n")
@@ -109,38 +78,4 @@ func usageFor(fs *flag.FlagSet, short string) func() {
 		w.Flush()
 		fmt.Fprintf(os.Stderr, "\n")
 	}
-}
-
-// "udp://host:1234", 80 => udp host:1234 host 1234
-// "host:1234", 80       => tcp host:1234 host 1234
-// "host", 80            => tcp host:80   host 80
-func parseAddr(addr string, defaultPort int) (network, address, host string, port int, err error) {
-	u, err := url.Parse(strings.ToLower(addr))
-	if err != nil {
-		return network, address, host, port, err
-	}
-
-	switch {
-	case u.Scheme == "" && u.Opaque == "" && u.Host == "" && u.Path != "": // "host"
-		u.Scheme, u.Opaque, u.Host, u.Path = "tcp", "", net.JoinHostPort(u.Path, strconv.Itoa(defaultPort)), ""
-	case u.Scheme != "" && u.Opaque != "" && u.Host == "" && u.Path == "": // "host:1234"
-		u.Scheme, u.Opaque, u.Host, u.Path = "tcp", "", net.JoinHostPort(u.Scheme, u.Opaque), ""
-	case u.Scheme != "" && u.Opaque == "" && u.Host != "" && u.Path == "": // "tcp://host[:1234]"
-		if _, _, err := net.SplitHostPort(u.Host); err != nil {
-			u.Host = net.JoinHostPort(u.Host, strconv.Itoa(defaultPort))
-		}
-	default:
-		return network, address, host, port, errors.Errorf("%s: unsupported address format", addr)
-	}
-
-	host, portStr, err := net.SplitHostPort(u.Host)
-	if err != nil {
-		return network, address, host, port, err
-	}
-	port, err = strconv.Atoi(portStr)
-	if err != nil {
-		return network, address, host, port, err
-	}
-
-	return u.Scheme, u.Host, host, port, nil
 }

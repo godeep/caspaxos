@@ -18,6 +18,7 @@ import (
 	"github.com/peterbourgon/caspaxos"
 	"github.com/peterbourgon/caspaxos/cluster"
 	"github.com/peterbourgon/caspaxos/httpapi"
+	"github.com/pkg/errors"
 )
 
 func runAcceptor(args []string) error {
@@ -52,48 +53,22 @@ func runAcceptor(args []string) error {
 	var apiPort int
 	{
 		var err error
-		apiNetwork, _, apiHost, apiPort, err = parseAddr(*apiAddr, defaultAPIPort)
+		apiNetwork, _, apiHost, apiPort, err = cluster.ParseAddr(*apiAddr, defaultAPIPort)
 		if err != nil {
 			return err
 		}
 	}
 
 	// Parse cluster comms addresses.
-	var clusterBindHost string
-	var clusterBindPort int
-	var clusterAdvertiseHost string
-	var clusterAdvertisePort int
+	var chp cluster.HostPorts
 	{
 		var err error
-		_, _, clusterBindHost, clusterBindPort, err = parseAddr(*clusterBindAddr, defaultClusterPort)
+		chp, err = cluster.CalculateHostPorts(
+			*clusterBindAddr, *clusterAdvertiseAddr,
+			defaultClusterPort, clusterPeers, logger,
+		)
 		if err != nil {
-			return err
-		}
-		level.Info(logger).Log("cluster_bind", fmt.Sprintf("%s:%d", clusterBindHost, clusterBindPort))
-
-		if *clusterAdvertiseAddr != "" {
-			_, _, clusterAdvertiseHost, clusterAdvertisePort, err = parseAddr(*clusterAdvertiseAddr, defaultClusterPort)
-			if err != nil {
-				return err
-			}
-			level.Info(logger).Log("cluster_advertise", fmt.Sprintf("%s:%d", clusterAdvertiseHost, clusterAdvertisePort))
-		}
-
-		advertiseIP, err := cluster.CalculateAdvertiseIP(clusterBindHost, clusterAdvertiseHost, net.DefaultResolver, logger)
-		if err != nil {
-			level.Error(logger).Log("err", "couldn't deduce an advertise IP: "+err.Error())
-			return err
-		}
-
-		if hasNonlocal(clusterPeers) && isUnroutable(advertiseIP.String()) {
-			level.Warn(logger).Log("err", "this node advertises itself on an unroutable IP", "ip", advertiseIP.String())
-			level.Warn(logger).Log("err", "this node will be unreachable in the cluster")
-			level.Warn(logger).Log("err", "provide -cluster.advertise-addr as a routable IP address or hostname")
-		}
-		level.Info(logger).Log("user_bind_host", clusterBindHost, "user_advertise_host", clusterAdvertiseHost, "calculated_advertise_ip", advertiseIP)
-		clusterAdvertiseHost = advertiseIP.String()
-		if clusterAdvertisePort == 0 {
-			clusterAdvertisePort = clusterBindPort
+			return errors.Wrap(err, "calculating cluster hosts and ports")
 		}
 	}
 
@@ -102,10 +77,9 @@ func runAcceptor(args []string) error {
 	{
 		var err error
 		peer, err = cluster.NewPeer(
-			clusterBindHost, clusterBindPort,
-			clusterAdvertiseHost, clusterAdvertisePort,
-			clusterPeers,
-			cluster.NodeTypeAcceptor, apiPort,
+			chp.BindHost, chp.BindPort,
+			chp.AdvertiseHost, chp.AdvertisePort,
+			clusterPeers, cluster.NodeTypeAcceptor, apiPort,
 			log.With(logger, "component", "cluster"),
 		)
 		if err != nil {
@@ -122,7 +96,7 @@ func runAcceptor(args []string) error {
 	var acceptor caspaxos.Acceptor
 	{
 		acceptor = caspaxos.NewMemoryAcceptor(
-			net.JoinHostPort(clusterAdvertiseHost, strconv.Itoa(clusterAdvertisePort)),
+			net.JoinHostPort(chp.AdvertiseHost, strconv.Itoa(chp.AdvertisePort)),
 			log.With(logger, "component", "acceptor"),
 		)
 		// TODO(pb): wire up configuration changes
