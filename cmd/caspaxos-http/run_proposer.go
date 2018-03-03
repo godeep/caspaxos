@@ -116,8 +116,8 @@ func runProposer(args []string) error {
 
 	// Lol.
 	{
-		level.Info(logger).Log("msg", "waiting 2s for acceptors to appear")
-		time.Sleep(2 * time.Second)
+		level.Info(logger).Log("msg", "waiting 1s for acceptors to appear")
+		time.Sleep(1 * time.Second)
 		level.Info(logger).Log("acceptors", fmt.Sprintf("%v", peer.Current(cluster.NodeTypeAcceptor)))
 	}
 

@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/gorilla/mux"
 	"github.com/peterbourgon/caspaxos"
 	"github.com/pkg/errors"
 )
@@ -30,31 +31,16 @@ type AcceptorServer struct {
 }
 
 func (as AcceptorServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	tokens := strings.SplitN(strings.Trim(r.URL.Path, "/"), "/", 2)
-	if len(tokens) != 2 {
-		http.Error(w, "invalid path: expect /{prepare,accept}/:key[/:value]", http.StatusBadRequest)
-		return
-	}
-
-	println("### AcceptorServer ServeHTTP path", tokens[0])
-	switch strings.ToLower(tokens[0]) {
-	case "prepare":
-		as.handlePrepare(w, r)
-	case "accept":
-		as.handleAccept(w, r)
-	default:
-		http.Error(w, "invalid path: expect /{prepare,accept}/:key[/:value]", http.StatusBadRequest)
-	}
+	println("### AcceptorServer ServeHTTP", r.Method, r.URL.String())
+	router := mux.NewRouter().StrictSlash(true).Methods("POST").Subrouter()
+	router.HandleFunc("/prepare/{key}", as.handlePrepare)
+	router.HandleFunc("/accept/{key}/{value}", as.handleAccept)
+	router.HandleFunc("/accept/{key}", as.handleAccept) // no value is OK
+	router.ServeHTTP(w, r)
 }
 
 func (as AcceptorServer) handlePrepare(w http.ResponseWriter, r *http.Request) {
-	tokens := strings.SplitN(r.URL.Path, "/", 2)
-	if len(tokens) != 2 {
-		http.Error(w, "invalid path: need /prepare/:key", http.StatusBadRequest)
-		return
-	}
-
-	key := tokens[1]
+	key := mux.Vars(r)["key"]
 	if key == "" {
 		http.Error(w, "no key specified", http.StatusBadRequest)
 		return
@@ -66,55 +52,41 @@ func (as AcceptorServer) handlePrepare(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	println("### AcceptorServer handlePrepare Prepare key", key, "b", b.String())
 	val, current, err := as.Acceptor.Prepare(r.Context(), key, b)
 	ballot2header(current, w.Header())
 	if err != nil {
-		println("### AcceptorServer handlePrepare Prepare key", key, "b", b.String(), "err", err.Error())
 		http.Error(w, err.Error(), http.StatusPreconditionFailed)
 		return
 	}
 
-	println("### AcceptorServer handlePrepare Prepare OK")
 	w.Header().Set("Content-Type", "text/plain")
 	fmt.Fprintf(w, "%s", val)
 }
 
 func (as AcceptorServer) handleAccept(w http.ResponseWriter, r *http.Request) {
-	tokens := strings.SplitN(strings.Trim(r.URL.Path, "/"), "/", 3)
-	if len(tokens) < 2 {
-		println("### AcceptorServer handleAccept error-out at path check, URL", r.URL.String())
-		http.Error(w, "invalid path: need /accept/:key/:value", http.StatusBadRequest)
-		return
-	}
-
-	key := tokens[1]
+	vars := mux.Vars(r)
+	key := vars["key"]
 	if key == "" {
-		println("### AcceptorServer handleAccept error-out at key check, URL", r.URL.String())
 		http.Error(w, "no key specified", http.StatusBadRequest)
 		return
 	}
 
 	var valueBytes []byte
-	if len(tokens) > 2 && tokens[2] != "" {
-		valueBytes = []byte(tokens[2])
+	if value := vars["value"]; value != "" {
+		valueBytes = []byte(value)
 	}
 
 	b, err := header2ballot(r.Header)
 	if err != nil {
-		println("### AcceptorServer handleAccept error-out at header check")
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 
-	println("### AcceptorServer handleAccept Accept key", key, "b", b.String(), "value", string(valueBytes))
 	if err = as.Acceptor.Accept(r.Context(), key, b, valueBytes); err != nil {
-		println("### AcceptorServer handleAccept Accept key", key, "b", b.String(), "value", string(valueBytes), "err", err.Error())
 		http.Error(w, err.Error(), http.StatusNotAcceptable)
 		return
 	}
 
-	println("### AcceptorServer handleAccept Accept OK")
 	w.Header().Set("Content-Type", "text/plain")
 	fmt.Fprintln(w, "OK")
 }
@@ -189,19 +161,24 @@ func (ac AcceptorClient) Accept(ctx context.Context, key string, b caspaxos.Ball
 
 	u := *ac.URL
 	u.Path = fmt.Sprintf("/accept/%s/%s", url.PathEscape(key), url.PathEscape(string(value)))
+	println("### AcceptorClient Accept POST", u.String())
 	req, err := http.NewRequest("POST", u.String(), nil)
 	if err != nil {
+		println("### AcceptorClient Accept POST", u.String(), "NewRequest error", err.Error())
 		return errors.Wrap(err, "constructing HTTP request")
 	}
 
 	ballot2header(b, req.Header)
+	println("### AcceptorClient Accept", req.Method, req.URL.String(), ballotHeaderKey, req.Header.Get(ballotHeaderKey))
 	req = req.WithContext(ctx)
 	resp, err := client.Do(req)
 	if err != nil {
+		println("### AcceptorClient Accept", req.Method, req.URL.String(), "Do error", err.Error())
 		return errors.Wrap(err, "executing HTTP request")
 	}
 
 	if resp.StatusCode != http.StatusOK {
+		println("### AcceptorClient Accept", req.Method, req.URL.String(), "Status error", resp.Status)
 		return errors.New(resp.Status)
 	}
 
