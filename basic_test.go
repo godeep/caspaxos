@@ -15,9 +15,9 @@ func TestInitializeOnlyOnce(t *testing.T) {
 	// Build the cluster.
 	var (
 		logger = log.NewLogfmtLogger(testWriter{t})
-		a1     = NewMemoryAcceptor("1")
-		a2     = NewMemoryAcceptor("2")
-		a3     = NewMemoryAcceptor("3")
+		a1     = NewMemoryAcceptor("1", log.With(logger, "a", 1))
+		a2     = NewMemoryAcceptor("2", log.With(logger, "a", 2))
+		a3     = NewMemoryAcceptor("3", log.With(logger, "a", 3))
 		p1     = NewLocalProposer(1, log.With(logger, "p", 1), a1, a2, a3)
 		p2     = NewLocalProposer(2, log.With(logger, "p", 2), a1, a2, a3)
 		p3     = NewLocalProposer(3, log.With(logger, "p", 3), a1, a2, a3)
@@ -79,9 +79,9 @@ func TestFastForward(t *testing.T) {
 	// Build the cluster.
 	var (
 		logger = log.NewLogfmtLogger(testWriter{t})
-		a1     = NewMemoryAcceptor("1")
-		a2     = NewMemoryAcceptor("2")
-		a3     = NewMemoryAcceptor("3")
+		a1     = NewMemoryAcceptor("1", log.With(logger, "a", 1))
+		a2     = NewMemoryAcceptor("2", log.With(logger, "a", 2))
+		a3     = NewMemoryAcceptor("3", log.With(logger, "a", 3))
 		p1     = NewLocalProposer(1, log.With(logger, "p", 1), a1, a2, a3)
 		p2     = NewLocalProposer(2, log.With(logger, "p", 2), a1, a2, a3)
 		p3     = NewLocalProposer(3, log.With(logger, "p", 3), a1, a2, a3)
@@ -110,9 +110,9 @@ func TestMultiKeyReads(t *testing.T) {
 	// Build the cluster.
 	var (
 		logger = log.NewLogfmtLogger(testWriter{t})
-		a1     = NewMemoryAcceptor("1")
-		a2     = NewMemoryAcceptor("2")
-		a3     = NewMemoryAcceptor("3")
+		a1     = NewMemoryAcceptor("1", log.With(logger, "a", 1))
+		a2     = NewMemoryAcceptor("2", log.With(logger, "a", 2))
+		a3     = NewMemoryAcceptor("3", log.With(logger, "a", 3))
 		p1     = NewLocalProposer(1, log.With(logger, "p", 1), a1, a2, a3)
 		p2     = NewLocalProposer(2, log.With(logger, "p", 2), a1, a2, a3)
 		p3     = NewLocalProposer(3, log.With(logger, "p", 3), a1, a2, a3)
@@ -142,9 +142,9 @@ func TestConcurrentCASWrites(t *testing.T) {
 	// Build the cluster.
 	var (
 		logger = log.NewLogfmtLogger(testWriter{t})
-		a1     = NewMemoryAcceptor("1")
-		a2     = NewMemoryAcceptor("2")
-		a3     = NewMemoryAcceptor("3")
+		a1     = NewMemoryAcceptor("1", log.With(logger, "a", 1))
+		a2     = NewMemoryAcceptor("2", log.With(logger, "a", 2))
+		a3     = NewMemoryAcceptor("3", log.With(logger, "a", 3))
 		p1     = NewLocalProposer(1, log.With(logger, "p", 1), a1, a2, a3)
 		p2     = NewLocalProposer(2, log.With(logger, "p", 2), a1, a2, a3)
 		p3     = NewLocalProposer(3, log.With(logger, "p", 3), a1, a2, a3)
