@@ -104,7 +104,7 @@ func (p *LocalProposer) propose(ctx context.Context, key string, f ChangeFunc) (
 	b := p.ballot.inc()
 
 	// Set up a logger, for debugging.
-	logger := level.Debug(log.With(p.logger, "method", "Propose", "B", b))
+	logger := level.Debug(log.With(p.logger, "method", "Propose", "key", key, "B", b))
 
 	// If prepare is successful, we'll have an accepted current state.
 	var currentState []byte
