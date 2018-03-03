@@ -1,4 +1,3 @@
-// Package httpapi implements a simple API for operating on string values.
 package httpapi
 
 import (
@@ -88,19 +87,19 @@ func (ps ProposerServer) handleGet(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	val, err := ps.proposer.Propose(r.Context(), key, read)
+	returnedValue, err := ps.proposer.Propose(r.Context(), key, read)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
-	if val == nil {
-		http.Error(w, fmt.Sprintf("key %q doesn't exist", key), http.StatusNotFound)
+	if returnedValue == nil {
+		http.Error(w, fmt.Sprintf("key %s doesn't exist", key), http.StatusNotFound)
 		return
 	}
 
 	w.Header().Set("Content-Type", "text/plain")
-	fmt.Fprintf(w, "%s\n", val)
+	fmt.Fprintf(w, "%s\n", prettyPrint(returnedValue))
 }
 
 func (ps ProposerServer) handlePost(w http.ResponseWriter, r *http.Request) {
@@ -123,34 +122,43 @@ func (ps ProposerServer) handlePost(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var currentBytes []byte
-	if current := r.URL.Query().Get("current"); current != "" {
-		currentBytes = []byte(current)
+	var current []byte
+	if s := r.URL.Query().Get("current"); s != "" {
+		current = []byte(s)
 	}
 
-	var nextBytes []byte
-	next := r.URL.Query().Get("next")
-	if next == "" {
+	var next []byte
+	nextStr := r.URL.Query().Get("next")
+	if nextStr == "" {
 		http.Error(w, "no next value specified", http.StatusBadRequest)
 		return
 	}
-	nextBytes = []byte(next)
+	next = []byte(nextStr)
 
-	val, err := ps.proposer.Propose(r.Context(), key, cas(currentBytes, nextBytes))
+	returnedValue, err := ps.proposer.Propose(r.Context(), key, cas(current, next))
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
-	if bytes.Compare(val, nextBytes) != 0 { // CAS failure
-		http.Error(w, fmt.Sprintf("wanted to set %q, but got back %q", string(nextBytes), string(val)), http.StatusPreconditionFailed)
+	if bytes.Compare(returnedValue, next) != 0 { // CAS failure
+		http.Error(w, fmt.Sprintf("CAS(%s, %s, %s) failed: returned value %s", key, prettyPrint(current), prettyPrint(next), prettyPrint(returnedValue)), http.StatusPreconditionFailed)
 		return
 	}
 
 	w.Header().Set("Content-Type", "text/plain")
-	fmt.Fprintf(w, "CAS(%q, %q, %q) success: new value %q\n", key, string(currentBytes), string(nextBytes), string(val))
+	fmt.Fprintf(w, "CAS(%s, %s, %s) success: new value %s\n", key, prettyPrint(current), prettyPrint(next), prettyPrint(returnedValue))
 }
 
 func (ps ProposerServer) handleDelete(w http.ResponseWriter, r *http.Request) {
 	http.Error(w, "not implemented", http.StatusNotImplemented)
+}
+
+type prettyPrint []byte
+
+func (pp prettyPrint) String() string {
+	if pp == nil {
+		return "Ø"
+	}
+	return string(pp)
 }

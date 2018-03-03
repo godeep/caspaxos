@@ -161,7 +161,7 @@ func (ac AcceptorClient) Prepare(ctx context.Context, key string, b caspaxos.Bal
 	}
 
 	u := *ac.URL
-	u.Path = fmt.Sprintf("/prepare/%s/", url.PathEscape(key))
+	u.Path = fmt.Sprintf("/prepare/%s", url.PathEscape(key))
 	req, err := http.NewRequest("POST", u.String(), nil)
 	if err != nil {
 		return nil, caspaxos.Ballot{}, errors.Wrap(err, "constructing HTTP request")
